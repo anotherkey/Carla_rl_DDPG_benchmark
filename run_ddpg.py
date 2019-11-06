@@ -1,0 +1,102 @@
+import argparse
+import logging
+from carla.driving_benchmark.driving_benchmark import run_driving_benchmark
+from carla.driving_benchmark.experiment_suites import CoRL2017
+
+import numpy as np
+import tensorflow as tf
+import os
+from carla.agent.DDPGAgent import DDPGAgent
+from carla.agent.DDPGAgent import CriticNetwork, ActorNetwork
+
+
+ACTOR_LEARNING_RATE = 0.0001
+CRITIC_LEARNING_RATE = 0.001
+TAU = 0.001
+GAMMA = 0.99
+
+dir = 'models'
+
+try:
+    from carla import carla_server_pb2 as carla_protocol
+except ImportError:
+    raise RuntimeError(
+        'cannot import "carla_server_pb2.py", run the protobuf compiler to generate this file')
+
+if __name__ == '__main__':
+    argparser = argparse.ArgumentParser(description=__doc__)
+    argparser.add_argument(
+        '-v', '--verbose',
+        action='store_true',
+        dest='debug',
+        help='print debug information')
+    argparser.add_argument(
+        '--host',
+        metavar='H',
+        default='localhost',
+        help='IP of the host server (default: localhost)')
+    argparser.add_argument(
+        '-p', '--port',
+        metavar='P',
+        default=2000,
+        type=int,
+        help='TCP port to listen to (default: 2000)')
+    argparser.add_argument(
+        '-c', '--city-name',
+        metavar='C',
+        default='Town01',
+        help='The town that is going to be used on benchmark'
+             + '(needs to match active town in server, options: Town01 or Town02)')
+    argparser.add_argument(
+        '-n', '--log_name',
+        metavar='T',
+        default='test',
+        help='The name of the log file to be created by the scripts'
+    )
+
+    argparser.add_argument(
+        '--avoid-stopping',
+        default=True,
+        action='store_false',
+        help=' Uses the speed prediction branch to avoid unwanted agent stops'
+    )
+    argparser.add_argument(
+        '--continue-experiment',
+        action='store_true',
+        help='If you want to continue the experiment with the given log name'
+    )
+
+    args = argparser.parse_args()
+
+    log_level = logging.DEBUG if args.debug else logging.INFO
+    logging.basicConfig(format='%(levelname)s: %(message)s', level=log_level)
+
+    logging.info('listening to server %s:%s', args.host, args.port)
+
+    gpu_options = tf.GPUOptions(allow_growth=True)
+
+    with tf.Session(config=tf.ConfigProto(gpu_options=gpu_options)) as sess:
+
+        state_dim = 517
+        action_dim = 2
+        action_bound = 1
+
+        # print(sess.run('W_c_1:0'), '===============================')
+        actor = ActorNetwork(sess, state_dim, action_dim, action_bound,
+                             ACTOR_LEARNING_RATE, TAU)
+
+        critic = CriticNetwork(sess, state_dim, action_dim, action_bound,
+                               CRITIC_LEARNING_RATE, TAU, actor.get_num_trainable_vars(),
+                               )
+
+        # ddpg_agent = DDPGAgent(sess, actor, critic, GAMMA, Inference_net_dir=dir)
+
+        # Agent是包含了控制命令的类
+        # CoRL2017提供了carla环境配置
+        corl = CoRL2017(args.city_name)
+
+        # Now actually run the driving_benchmark
+        run_driving_benchmark(actor, corl, args.city_name,
+                              args.log_name, continue_experiment=True,
+                              host=args.host, port=args.port)
+
